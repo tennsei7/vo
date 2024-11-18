@@ -5,7 +5,7 @@ use std::sync::{Arc, Weak};
 use atomic_refcell::AtomicRefCell;
 use linux_api::errno::Errno;
 use linux_api::ioctls::IoctlRequest;
-use linux_api::netlink::nlmsghdr;
+use linux_api::netlink::{ifaddrmsg, ifinfomsg, nlmsghdr};
 use linux_api::rtnetlink::{RTMGRP_IPV4_IFADDR, RTMGRP_IPV6_IFADDR, RTM_GETADDR, RTM_GETLINK};
 use linux_api::socket::Shutdown;
 use neli::consts::nl::{NlmF, NlmFFlags, Nlmsg};
@@ -689,8 +689,28 @@ impl InitialState {
             let nlmsg_type = u16::from_ne_bytes(nlmsg_type.try_into().unwrap());
 
             match nlmsg_type {
-                RTM_GETLINK => self.handle_ifinfomsg(common, &packet_buffer[..]),
-                RTM_GETADDR => self.handle_ifaddrmsg(common, &packet_buffer[..]),
+                RTM_GETLINK => {
+                    let min_len =
+                        std::mem::size_of::<nlmsghdr>() + std::mem::size_of::<ifinfomsg>();
+                    // Pad the message if it's too short and update the len field
+                    if packet_buffer.len() < min_len {
+                        packet_buffer.resize(min_len, 0);
+                        packet_buffer[memoffset::span_of!(nlmsghdr, nlmsg_len)]
+                            .copy_from_slice(&(min_len as u32).to_le_bytes()[..]);
+                    }
+                    self.handle_ifinfomsg(common, &packet_buffer[..])
+                }
+                RTM_GETADDR => {
+                    let min_len =
+                        std::mem::size_of::<nlmsghdr>() + std::mem::size_of::<ifaddrmsg>();
+                    // Pad the message if it's too short and update the len field
+                    if packet_buffer.len() < min_len {
+                        packet_buffer.resize(min_len, 0);
+                        packet_buffer[memoffset::span_of!(nlmsghdr, nlmsg_len)]
+                            .copy_from_slice(&(min_len as u32).to_le_bytes()[..]);
+                    }
+                    self.handle_ifaddrmsg(common, &packet_buffer[..])
+                }
                 _ => {
                     warn_once_then_debug!(
                         "Found unsupported nlmsg_type: {nlmsg_type} (only RTM_GETLINK
